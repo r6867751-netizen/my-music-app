@@ -161,7 +161,7 @@
 @media(prefers-reduced-motion:reduce){.content>*,.grid>.card,.recentColumn>.card,.fullPlayerOverlay,.fullPlayerInfo,.fullPlayerControls,.fullPlayerBottom,.fullPlayerArtwork img{animation:none}}
 @media(max-width:600px){
 	.fullPlayerArtwork{width:min(86vw,280px);aspect-ratio:1;margin:28px auto 0;border-radius:18px;box-shadow:0 16px 35px rgba(0,0,0,.45)}
-	.fullPlayerInfo{margin-top:auto!important;padding-bottom:12px}
+	.fullPlayerInfo{margin-top:auto!important;padding-bottom:12px;transform:translateY(-20px)}
 	.fullPlayerTitleRow{display:block}
 	.fullPlayerTitleRow>div:first-child{text-align:center}
 	.fullPlayerTitleRow h2{font-size:21px!important}
