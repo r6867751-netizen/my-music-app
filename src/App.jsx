@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search, Home, Heart, ListMusic, Clock3, Play, Pause, SkipBack,
   SkipForward, Volume2, VolumeX, Plus, Trash2, Menu, X, ExternalLink,
-  Music2, MoreHorizontal, Minimize2
+  Music2, MoreVertical, Shuffle, Repeat2, ChevronDown
 } from "lucide-react";
 import { fetchTrendingYouTube, searchYouTube } from "./api/youtube";
 
@@ -111,6 +111,13 @@ function loadSession() {
 function saveSession(value) {
   try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(value)); } catch {}
 }
+function displaySongTitle(title) {
+  let songTitle = title.split(/\s+\|\s+/)[0].trim();
+  songTitle = songTitle.replace(/\s*[-–]\s*(official|video|lyric|lyrics|music video|full song|song|trailer|teaser).*$/i, "");
+  songTitle = songTitle.replace(/\s+(official\s+)?(music\s+)?video\s+(song|lyric|lyrics|trailer).*$/i, "");
+  songTitle = songTitle.trim();
+  return songTitle.length > 35 ? `${songTitle.slice(0, 32).trim()}...` : songTitle;
+}
 
 function App() {
   const savedSession = useRef(loadSession());
@@ -139,19 +146,28 @@ function App() {
   const [muted, setMuted] = useState(() => savedSession.current.muted || false);
   const [showQueue, setShowQueue] = useState(false);
   const [fullPlayer, setFullPlayer] = useState(false);
+  const [closingPlayer, setClosingPlayer] = useState(false);
   const [playlistPromptSong, setPlaylistPromptSong] = useState(null);
   const [playlistNameInput, setPlaylistNameInput] = useState("");
+  const [openSongMenu, setOpenSongMenu] = useState(null);
+  const [shuffleMode, setShuffleMode] = useState(false);
   const playerRef = useRef(null);
   const apiReady = useRef(false);
   const queueRef = useRef(queue);
   const currentRef = useRef(current);
   const autoPlayRef = useRef(autoPlay);
+  const playingRef = useRef(playing);
+  const endedSongRef = useRef(null);
+  const playlistSongsRef = useRef(null);
   const t = key => TRANSLATIONS[language]?.[key] || TRANSLATIONS.en[key] || key;
   const relatedQueueRef = useRef([]);
+  const closeFullPlayer = () => setClosingPlayer(true);
+  const scrollToSection = id => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 
   queueRef.current = queue;
   currentRef.current = current;
   autoPlayRef.current = autoPlay;
+  playingRef.current = playing;
 
   useEffect(() => {
     save(LS_FAV, favorites);
@@ -184,20 +200,27 @@ function App() {
   }, []);
 
   const getRelatedSongs = (song) => {
-    const searchMatches = results.filter(item => item.id !== song.id);
+    const recentIds = new Set(recent.map(item => item.id));
+    const isEligible = item => item.id !== song.id && !recentIds.has(item.id);
+    const searchMatches = results.filter(isEligible);
     if (searchMatches.length) return searchMatches;
 
     const section = HOME_RECOMMENDATION_SECTIONS.find(group => group.songs.some(item => item.id === song.id));
-    if (section) return section.songs.filter(item => item.id !== song.id);
-    return RECOMMENDED_SONGS.filter(item => item.id !== song.id);
+    if (section) return section.songs.filter(isEligible);
+    return RECOMMENDED_SONGS.filter(isEligible);
   };
 
-  const playSong = (song, addRecent = true, seedRelated = false) => {
+  const playSong = (song, addRecent = true, seedRelated = false, relatedSongs = null) => {
     setCurrent(song);
     setCurrentTime(0);
     setDuration(0);
     setPlaying(true);
-    if (seedRelated) relatedQueueRef.current = getRelatedSongs(song);
+    if (seedRelated) {
+      playlistSongsRef.current = relatedSongs || null;
+      relatedQueueRef.current = relatedSongs
+        ? relatedSongs.filter(item => item.id !== song.id)
+        : getRelatedSongs(song);
+    }
     if (addRecent) {
       setRecent(prev => [song, ...prev.filter(x => x.id !== song.id)].slice(0, 30));
     }
@@ -218,6 +241,10 @@ function App() {
     const nextDuration = player.getDuration?.();
     if (Number.isFinite(nextTime)) setCurrentTime(nextTime);
     if (Number.isFinite(nextDuration) && nextDuration > 0) setDuration(nextDuration);
+    if (current && playingRef.current && Number.isFinite(nextTime) && Number.isFinite(nextDuration) && nextDuration > 0 && nextTime >= nextDuration - 0.5 && endedSongRef.current !== current.id) {
+      endedSongRef.current = current.id;
+      nextSong();
+    }
   };
 
   const seekToTime = (time) => {
@@ -245,15 +272,22 @@ function App() {
             e.target.setVolume(volume);
             if (currentTime > 0) e.target.seekTo(currentTime, true);
             window.setTimeout(updatePlayerProgress, 250);
-            if (playing) e.target.playVideo();
+            if (playingRef.current) e.target.playVideo();
           },
           onStateChange: e => {
-            if (window.YT?.PlayerState && e.data === window.YT.PlayerState.ENDED && autoPlayRef.current) nextSong();
+            if (window.YT?.PlayerState && e.data === window.YT.PlayerState.CUED && playingRef.current) {
+              e.target.playVideo();
+            }
+            if (window.YT?.PlayerState && e.data === window.YT.PlayerState.ENDED && autoPlayRef.current && endedSongRef.current !== currentRef.current?.id) {
+              endedSongRef.current = currentRef.current?.id;
+              window.setTimeout(nextSong, 0);
+            }
           }
         }
       });
     } else {
       playerRef.current.loadVideoById(current.id);
+      if (playing) playerRef.current.playVideo?.();
     }
   }, [current?.id]);
 
@@ -278,6 +312,21 @@ function App() {
     const activeSong = currentRef.current;
     const activeQueue = queueRef.current;
     if (!activeSong) return;
+
+    if (playlistSongsRef.current) {
+      if (!relatedQueueRef.current.length) {
+        relatedQueueRef.current = playlistSongsRef.current.filter(item => item.id !== activeSong.id);
+      }
+      if (relatedQueueRef.current.length) {
+        playSong(relatedQueueRef.current.shift());
+        return;
+      }
+      if (playlistSongsRef.current.length === 1) {
+        playSong(activeSong);
+        return;
+      }
+    }
+
     const idx = activeQueue.findIndex(x => x.id === activeSong.id);
     if (idx >= 0 && idx < activeQueue.length - 1) {
       playSong(activeQueue[idx + 1]);
@@ -288,6 +337,9 @@ function App() {
       return;
     }
 
+    if (!relatedQueueRef.current.length) {
+      relatedQueueRef.current = getRelatedSongs(activeSong);
+    }
     if (relatedQueueRef.current.length) {
       playSong(relatedQueueRef.current.shift());
       return;
@@ -360,6 +412,16 @@ function App() {
 
     const saveSongToPlaylist = () => saveSongToNamedPlaylist(playlistNameInput.trim());
 
+    const shareSong = async (song) => {
+      const url = `https://www.youtube.com/watch?v=${song.id}`;
+      if (navigator.share) {
+        await navigator.share({ title: song.title, url });
+      } else {
+        await navigator.clipboard?.writeText(url);
+      }
+      setOpenSongMenu(null);
+    };
+
   const removePlaylist = (playlistName) => {
     if (playlistName === "My Playlist" || !window.confirm(t("deletePlaylistConfirm"))) return;
     setPlaylists(prev => {
@@ -369,6 +431,15 @@ function App() {
     });
     setSelectedPlaylist("My Playlist");
     setView("playlist");
+  };
+
+  const removeSongFromPlaylist = (songId) => {
+    if (view !== "playlist") return;
+    setPlaylists(prev => ({
+      ...prev,
+      [selectedPlaylist]: (prev[selectedPlaylist] || []).filter(song => song.id !== songId)
+    }));
+    setOpenSongMenu(null);
   };
 
   const isFav = id => favorites.some(x => x.id === id);
@@ -392,22 +463,24 @@ function App() {
   }, [searchText, recent, trendingSongs]);
 
   const renderSongCard = (song, sectionKey = "", listMode = false) => (
-    <article className="card" key={sectionKey ? `${sectionKey}-${song.id}` : song.id} style={listMode ? { display: "flex", alignItems: "stretch" } : undefined}>
-      <div className="thumb" onClick={() => playSong(song, true, true)} style={listMode ? { width: "clamp(90px, 18vw, 160px)", flexShrink: 0 } : undefined}>
+    <article className={`card ${listMode ? "listCard" : ""} ${openSongMenu === song.id ? "menuOpen" : ""}`} key={sectionKey ? `${sectionKey}-${song.id}` : song.id} style={listMode ? { display: "flex", alignItems: "stretch" } : undefined}>
+      <div className="thumb" onClick={() => playSong(song, true, true, view === "playlist" ? playlists[selectedPlaylist] : null)} style={listMode ? { width: "clamp(72px, 18vw, 110px)", flexShrink: 0 } : undefined}>
         <img src={song.thumbnail} alt="" />
         <div className="playOverlay"><Play fill="currentColor"/></div>
       </div>
-      <div className="cardBody" style={listMode ? { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: "10px 12px" } : undefined}>
-        <div className="title" title={song.title}>{song.title}</div>
+      <div className="cardBody" style={listMode ? { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: "10px 36px 10px 12px" } : undefined}>
+        <div className="title" title={displaySongTitle(song.title)}>{displaySongTitle(song.title)}</div>
         <div className="channel">{song.channel}</div>
-        <div className="actions">
-          <button title={t("play")} onClick={() => playSong(song, true, true)}><Play size={17}/></button>
-          <button title={t("addQueue")} onClick={() => addQueue(song)}><Plus size={17}/></button>
-          <button title={t("addPlaylist")} onClick={() => addPlaylist(song)}><ListMusic size={17}/></button>
-          <button className={isFav(song.id) ? "liked":""} title={t("favorite")} onClick={() => toggleFavorite(song)}><Heart size={17} fill={isFav(song.id) ? "currentColor":"none"}/></button>
-          <a title={t("openYoutube")} href={`https://www.youtube.com/watch?v=${song.id}`} target="_blank" rel="noreferrer"><ExternalLink size={16}/></a>
-        </div>
       </div>
+      {listMode && <div className="songMenuWrap">
+        <button className="songMenuButton" title="More options" onClick={() => setOpenSongMenu(openSongMenu === song.id ? null : song.id)}><MoreVertical size={18}/></button>
+        {openSongMenu === song.id && <div className="songMenu">
+          <button onClick={() => { toggleFavorite(song); setOpenSongMenu(null); }}><Heart size={15}/> {t("favorite")}</button>
+          <button onClick={() => { addPlaylist(song); setOpenSongMenu(null); }}><ListMusic size={15}/> {t("addPlaylist")}</button>
+          <button onClick={() => shareSong(song)}><ExternalLink size={15}/> Share</button>
+          {view === "playlist" && <button onClick={() => removeSongFromPlaylist(song.id)}><Trash2 size={15}/> Remove</button>}
+        </div>}
+      </div>}
     </article>
   );
 
@@ -425,6 +498,8 @@ function App() {
           .heroActions { flex-direction: column; align-items: stretch; }
           .heroActions .primary, .heroActions .secondary { width: 100%; flex: none; margin-top: 10px; }
           .discoverBar { flex-wrap: nowrap; overflow-x: auto; margin: 18px 0 8px; padding-bottom: 3px; }
+          .discoverBar { scrollbar-width: none; }
+          .discoverBar::-webkit-scrollbar { display: none; }
           .discoverBar span { flex: 0 0 auto; padding: 7px 10px; font-size: 10px; }
           .recommendSection { margin-top: 26px; }
           .sectionTitle { margin-bottom: 14px; }
@@ -443,6 +518,10 @@ function App() {
           .playBtn { width: 36px; height: 36px; }
           .progressWrap { grid-template-columns: 30px 1fr 30px; gap: 5px; font-size: 10px; }
           .queuePanel { bottom: 88px; }
+          .main header { height: 150px; display: block; padding: 58px 14px 12px; }
+          .main header .menu { position: absolute; top: 18px; left: 14px; }
+          .main header .search { width: 100%; max-width: none; margin-top: 16px; }
+          .main header .queueBtn { display: none; }
         }
       `}</style>
       <aside className={`sidebar ${mobileOpen ? "open" : ""}`}>
@@ -463,6 +542,9 @@ function App() {
       <main className="main">
         <header>
           <button className="menu" onClick={() => setMobileOpen(true)}><Menu/></button>
+          <div className="mobileGreeting">
+            <strong>Hi There,</strong>
+          </div>
           <form className="search" onSubmit={doSearch} style={{ position: "relative" }} onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}>
             <Search size={19}/>
             <input value={searchText} onFocus={() => setShowSuggestions(true)} onChange={e=>{setSearchText(e.target.value);setShowSuggestions(true)}} placeholder={t("searchPlaceholder")} />
@@ -470,7 +552,7 @@ function App() {
               <div style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, right: 0, zIndex: 50, padding: "6px", background: "#151519", border: "1px solid #303038", borderRadius: "12px", boxShadow: "0 18px 40px #000" }}>
                 {searchSuggestions.map(song => (
                   <button key={song.id} type="button" onMouseDown={e => e.preventDefault()} onClick={() => doSearch(undefined, song.title)} style={{ width: "100%", display: "block", padding: "10px 12px", textAlign: "left", borderRadius: "8px" }}>
-                    <strong style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{song.title}</strong>
+                    <strong style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{displaySongTitle(song.title)}</strong>
                     <small style={{ color: "#71717a" }}>{song.channel}</small>
                   </button>
                 ))}
@@ -497,15 +579,33 @@ function App() {
               </div>
 
               <div className="discoverBar">
-                <span>{t("trending")}</span>
-                <span>{t("freshPicks")}</span>
-                <span>{t("feelGood")}</span>
-                <span>{t("chillTag")}</span>
-                <span>{t("workout")}</span>
+                <button type="button" onClick={() => scrollToSection("trending-section")}>{t("trending")}</button>
+                <button type="button" onClick={() => scrollToSection("mood-section")}>{t("freshPicks")}</button>
+                <button type="button" onClick={() => scrollToSection("mood-section")}>{t("feelGood")}</button>
+                <button type="button" onClick={() => scrollToSection("chill-section")}>{t("chillTag")}</button>
+                <button type="button" onClick={() => scrollToSection("mood-section")}>{t("workout")}</button>
               </div>
 
-              {HOME_RECOMMENDATION_SECTIONS.slice(0, 2).map((section, index) => (
-                <div className="recommendSection" key={section.title}>
+              {recent.length > 0 && (
+                <div className="recommendSection recentSection">
+                  <div className="sectionTitle">
+                    <div>
+                      <span className="eyebrow">{t("library")}</span>
+                      <h2>{t("recentlyPlayed")}</h2>
+                    </div>
+                  </div>
+                  <div className="recentGrid">
+                    {Array.from({ length: Math.ceil(Math.min(recent.length, 12) / 4) }, (_, groupIndex) => (
+                      <div className="recentColumn" key={`recent-group-${groupIndex}`}>
+                        {recent.slice(groupIndex * 4, groupIndex * 4 + 4).map(song => renderSongCard(song, "recently-played", true))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {HOME_RECOMMENDATION_SECTIONS.slice(0, 3).map((section, index) => (
+                <div className="recommendSection" id={index === 0 ? "trending-section" : index === 1 ? "mood-section" : "chill-section"} key={section.title}>
                   <div className="sectionTitle">
                     <div>
                       <span className="eyebrow">{t("recommended")}</span>
@@ -521,19 +621,6 @@ function App() {
                   </div>
                 </div>
               ))}
-              {recent.length > 0 && (
-                <div className="recommendSection">
-                  <div className="sectionTitle">
-                    <div>
-                      <span className="eyebrow">{t("library")}</span>
-                      <h2>{t("recentlyPlayed")}</h2>
-                    </div>
-                  </div>
-                  <div className="grid">
-                    {recent.slice(0, 4).map(song => renderSongCard(song, "recently-played"))}
-                  </div>
-                </div>
-              )}
             </>
           ) : (
             <>
@@ -544,8 +631,8 @@ function App() {
               {loading && <div className="status">{t("searching")}</div>}
               {error && <div className="error">{error}</div>}
               {!loading && !error && homeItems.length === 0 && <div className="empty">{t("nothing")}</div>}
-              <div className="grid" style={view === "search" || view === "recent" ? { gridTemplateColumns: "1fr", gap: "8px" } : undefined}>
-                {homeItems.map(song => renderSongCard(song, view === "search" || view === "recent" ? `${view}-result` : "", view === "search" || view === "recent"))}
+              <div className="grid" style={view === "search" || view === "recent" || view === "playlist" ? { gridTemplateColumns: "1fr", gap: "8px" } : undefined}>
+                {homeItems.map(song => renderSongCard(song, view === "search" || view === "recent" || view === "playlist" ? `${view}-result` : "", view === "search" || view === "recent" || view === "playlist"))}
               </div>
               {view === "search" && !loading && !error && searchRecommendations.length > 0 && (
                 <div className="recommendSection searchRecommendations">
@@ -568,10 +655,14 @@ function App() {
 
       <div className="playerBar">
         <div className="now">
-          <div onClick={() => current && setFullPlayer(true)} role={current ? "button" : undefined} tabIndex={current ? 0 : undefined} onKeyDown={e => e.key === "Enter" && current && setFullPlayer(true)} style={{ display: "flex", alignItems: "center", gap: "12px", cursor: current ? "pointer" : "default" }}>
-            {current ? <><img src={current.thumbnail} alt=""/><div><strong>{current.title}</strong><small>{current.channel}</small></div></> : <><div className="miniLogo"><Music2/></div><div><strong>{t("nothingPlaying")}</strong><small>{t("searchSong")}</small></div></>}
+          <div onClick={() => { if (current) { setClosingPlayer(false); setFullPlayer(true); } }} role={current ? "button" : undefined} tabIndex={current ? 0 : undefined} onKeyDown={e => { if (e.key === "Enter" && current) { setClosingPlayer(false); setFullPlayer(true); } }} style={{ display: "flex", alignItems: "center", gap: "12px", cursor: current ? "pointer" : "default" }}>
+            {current ? <><img src={current.thumbnail} alt=""/><div><strong>{displaySongTitle(current.title)}</strong><small>{current.channel}</small></div></> : <><div className="miniLogo"><Music2/></div><div><strong>{t("nothingPlaying")}</strong><small>{t("searchSong")}</small></div></>}
           </div>
         </div>
+
+        <button className="playerFavorite" title={t("favorite")} onClick={() => current && toggleFavorite(current)} disabled={!current}>
+          <Heart size={19} fill={current && isFav(current.id) ? "currentColor" : "none"}/>
+        </button>
 
         <div className="playerCenter">
           <div className="controls">
@@ -600,23 +691,29 @@ function App() {
         </div>
       </div>
 
-      {fullPlayer && current && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 55, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "32px", background: "radial-gradient(circle at 50% 20%, #29292f, #09090b 62%)" }}>
-          <button onClick={() => setFullPlayer(false)} title="Minimize player" style={{ position: "absolute", top: "24px", right: "28px", color: "#d4d4d8" }}><Minimize2 /></button>
-          <img src={current.thumbnail} alt="" style={{ width: "min(420px, 72vw)", aspectRatio: "1", objectFit: "cover", borderRadius: "16px", boxShadow: "0 30px 90px #000" }} />
-          <div style={{ width: "min(680px, 100%)", marginTop: "28px", textAlign: "center" }}>
-            <h2 style={{ margin: 0, fontSize: "clamp(22px, 4vw, 36px)" }}>{current.title}</h2>
-            <p style={{ margin: "8px 0 24px", color: "#a1a1aa" }}>{current.channel}</p>
+      {(fullPlayer || closingPlayer) && current && (
+        <div className={`fullPlayerOverlay ${closingPlayer ? "closing" : ""}`} onAnimationEnd={e => { if (e.animationName === "fullPlayerFadeOut") { setClosingPlayer(false); setFullPlayer(false); } }} style={{ position: "fixed", inset: 0, zIndex: 55, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "32px", background: "radial-gradient(circle at 50% 20%, #29292f, #09090b 62%)" }}>
+          <button className="fullPlayerBack" onClick={closeFullPlayer} title="Close player"><ChevronDown /></button>
+          <div className="fullPlayerArtwork"><img src={current.thumbnail} alt="" /></div>
+          <div className="fullPlayerInfo" style={{ width: "min(680px, 100%)", marginTop: "28px", textAlign: "center" }}>
+            <div className="fullPlayerTitleRow">
+              <div><h2 style={{ margin: 0, fontSize: "clamp(22px, 4vw, 36px)" }}>{displaySongTitle(current.title)}</h2><p style={{ margin: "8px 0 24px", color: "#a1a1aa" }}>{current.channel}</p></div>
+              <div className="fullPlayerActions"><button onClick={() => toggleFavorite(current)} title={t("favorite")}><Heart fill={isFav(current.id) ? "currentColor" : "none"}/></button><button title="More options"><MoreVertical/></button></div>
+            </div>
             <div className="progressWrap" style={{ width: "100%" }}>
               <span>{formatTime(currentTime)}</span>
               <input type="range" min="0" max={duration || 0} value={Math.min(currentTime || 0, duration || 0)} onChange={e => seekToTime(Number(e.target.value))} disabled={!duration} />
               <span>{formatTime(duration)}</span>
             </div>
-            <div className="controls" style={{ marginTop: "24px", gap: "22px" }}>
+            <div className="controls fullPlayerControls" style={{ marginTop: "24px", gap: "22px" }}>
+              <button onClick={() => setShuffleMode(!shuffleMode)} title="Shuffle" style={{ opacity: shuffleMode ? 1 : .65 }}><Shuffle /></button>
               <button onClick={prevSong} title={t("previous")}><SkipBack fill="currentColor" /></button>
               <button className="playBtn" onClick={() => setPlaying(!playing)}>{playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button>
               <button onClick={nextSong} title={t("next")}><SkipForward fill="currentColor" /></button>
+              <button onClick={nextSong} title="Repeat"><Repeat2 /></button>
             </div>
+            <div className="fullPlayerUtility"><input type="range" min="0" max="100" value={muted ? 0 : volume} onChange={e=>{setMuted(false);setVolume(Number(e.target.value))}}/></div>
+            <div className="fullPlayerBottom"><button onClick={() => toggleFavorite(current)} title={t("favorite")}><Heart fill={isFav(current.id) ? "currentColor" : "none"}/></button><button title="Audio options"><Music2/></button></div>
           </div>
         </div>
       )}
@@ -629,7 +726,7 @@ function App() {
           {queue.length === 0 ? <div className="empty">{t("emptyQueue")}</div> : queue.map((song,i)=>(
             <div className={`queueItem ${current?.id===song.id?"current":""}`} key={song.id}>
               <img src={song.thumbnail} alt=""/>
-              <button className="qInfo" onClick={()=>playSong(song)}><strong>{song.title}</strong><small>{song.channel}</small></button>
+              <button className="qInfo" onClick={()=>playSong(song)}><strong>{displaySongTitle(song.title)}</strong><small>{song.channel}</small></button>
               <button onClick={()=>removeQueue(song.id)}><Trash2 size={17}/></button>
             </div>
           ))}
@@ -640,7 +737,7 @@ function App() {
         <div onClick={() => setPlaylistPromptSong(null)} style={{ position: "fixed", inset: 0, zIndex: 60, display: "grid", placeItems: "center", padding: "20px", background: "rgba(0,0,0,.7)" }}>
           <form onSubmit={e => { e.preventDefault(); saveSongToPlaylist(); }} onClick={e => e.stopPropagation()} style={{ width: "min(420px, 100%)", padding: "24px", background: "#151519", border: "1px solid #303038", borderRadius: "14px", boxShadow: "0 24px 80px #000" }}>
             <h3 style={{ margin: "0 0 8px" }}>{t("createPlaylist")}</h3>
-            <p style={{ margin: "0 0 16px", color: "#a1a1aa", fontSize: "13px" }}>{playlistPromptSong.title}</p>
+            <p style={{ margin: "0 0 16px", color: "#a1a1aa", fontSize: "13px" }}>{displaySongTitle(playlistPromptSong.title)}</p>
             <div style={{ display: "grid", gap: "7px" }}>
               {Object.keys(playlists).map(playlistName => (
                 <button key={playlistName} type="button" onClick={() => saveSongToNamedPlaylist(playlistName)} style={{ width: "100%", padding: "10px 12px", textAlign: "left", color: "#fff", background: "#202024", border: "1px solid #35353d", borderRadius: "8px" }}>

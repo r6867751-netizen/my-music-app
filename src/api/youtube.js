@@ -1,4 +1,9 @@
 const API_BASE = "https://www.googleapis.com/youtube/v3";
+const NON_ORIGINAL_TITLE = /\b(trailers?|movies?|serials?|bigg?\s*boss|episodes?|shows?|comedy)\b/i;
+
+function isOriginalSong(item) {
+  return item?.snippet?.title && !NON_ORIGINAL_TITLE.test(item.snippet.title);
+}
 
 function key() {
   const value = import.meta.env.VITE_YOUTUBE_API_KEY;
@@ -22,7 +27,7 @@ export async function searchYouTube(query, pageToken = "") {
   if (!res.ok) throw new Error(data?.error?.message || "YouTube search failed");
 
   return {
-    items: (data.items || []).map(item => ({
+    items: (data.items || []).filter(isOriginalSong).map(item => ({
       id: item.id.videoId,
       title: item.snippet.title,
       channel: item.snippet.channelTitle,
@@ -58,7 +63,7 @@ async function fetchTrendingRegion(regionCode) {
   const data = await res.json();
   if (!res.ok) throw new Error(data?.error?.message || "Unable to load trending songs");
 
-  return (data.items || []).map(item => ({
+  return (data.items || []).filter(isOriginalSong).map(item => ({
     id: item.id,
     title: item.snippet.title,
     channel: item.snippet.channelTitle,
