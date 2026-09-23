@@ -356,6 +356,27 @@ function App() {
     playSong(queue[Math.max(0, idx - 1)]);
   };
 
+  useEffect(() => {
+    if (!current || !("mediaSession" in navigator) || !("MediaMetadata" in window)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: displaySongTitle(current.title),
+      artist: current.channel,
+      album: "My Music",
+      artwork: current.thumbnail ? [{ src: current.thumbnail }] : []
+    });
+    navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+    navigator.mediaSession.setActionHandler("play", () => setPlaying(true));
+    navigator.mediaSession.setActionHandler("pause", () => setPlaying(false));
+    navigator.mediaSession.setActionHandler("nexttrack", nextSong);
+    navigator.mediaSession.setActionHandler("previoustrack", prevSong);
+
+    return () => {
+      ["play", "pause", "nexttrack", "previoustrack"].forEach(action => {
+        try { navigator.mediaSession.setActionHandler(action, null); } catch {}
+      });
+    };
+  }, [current?.id, playing]);
+
   const doSearch = async (e, selectedQuery) => {
     e?.preventDefault();
     const q = (selectedQuery ?? searchText).trim();
