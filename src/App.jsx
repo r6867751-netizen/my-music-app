@@ -695,10 +695,12 @@ function App() {
           <div className="progressWrap">
             <span>{formatTime(currentTime)}</span>
             <input
+              className="seekInput"
               type="range"
               min="0"
               max={duration || 0}
               value={Math.min(currentTime || 0, duration || 0)}
+              style={{ "--seek-progress": `${duration ? (Math.min(currentTime || 0, duration) / duration) * 100 : 0}%` }}
               onChange={(e) => seekToTime(Number(e.target.value))}
               disabled={!current || !duration}
             />
@@ -723,7 +725,7 @@ function App() {
             </div>
             <div className="progressWrap" style={{ width: "100%" }}>
               <span>{formatTime(currentTime)}</span>
-              <input type="range" min="0" max={duration || 0} value={Math.min(currentTime || 0, duration || 0)} onChange={e => seekToTime(Number(e.target.value))} disabled={!duration} />
+              <input className="seekInput" type="range" min="0" max={duration || 0} value={Math.min(currentTime || 0, duration || 0)} style={{ "--seek-progress": `${duration ? (Math.min(currentTime || 0, duration) / duration) * 100 : 0}%` }} onChange={e => seekToTime(Number(e.target.value))} disabled={!duration} />
               <span>{formatTime(duration)}</span>
             </div>
             <div className="controls fullPlayerControls" style={{ marginTop: "24px", gap: "22px" }}>
