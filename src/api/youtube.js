@@ -1,8 +1,12 @@
 const API_BASE = "https://www.googleapis.com/youtube/v3";
 const NON_ORIGINAL_TITLE = /\b(trailers?|movies?|serials?|bigg?\s*boss|episodes?|shows?|comedy)\b/i;
+const SHORTS_REELS = /\b(?:shorts?|reels?)\b/i;
 
-function isOriginalSong(item) {
-  return item?.snippet?.title && !NON_ORIGINAL_TITLE.test(item.snippet.title);
+export function isOriginalSong(item) {
+  if (!item?.snippet?.title) return false;
+  const text = `${item.snippet.title || ""} ${item.snippet.description || ""} ${item.snippet.channelTitle || ""}`;
+  if (SHORTS_REELS.test(text)) return false;
+  return !NON_ORIGINAL_TITLE.test(item.snippet.title);
 }
 
 function key() {

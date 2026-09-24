@@ -266,7 +266,14 @@ function App() {
     if (!playerRef.current) {
       playerRef.current = new window.YT.Player("yt-player", {
         videoId: current.id,
-        playerVars: { autoplay: 1, rel: 0, modestbranding: 1 },
+        playerVars: {
+          autoplay: 1,
+          rel: 0,
+          modestbranding: 1,
+          playsinline: 1,
+          controls: 0,
+          origin: window.location.origin
+        },
         events: {
           onReady: e => {
             e.target.setVolume(volume);
@@ -290,6 +297,44 @@ function App() {
       if (playing) playerRef.current.playVideo?.();
     }
   }, [current?.id]);
+
+  useEffect(() => {
+    const resumeBackgroundPlayback = () => {
+      if (!playingRef.current || !currentRef.current) return;
+      if (playerRef.current && typeof playerRef.current.playVideo === "function") {
+        try {
+          playerRef.current.playVideo();
+        } catch {}
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        resumeBackgroundPlayback();
+        if (currentRef.current?.title) {
+          document.title = `♫ ${currentRef.current.title}`;
+        }
+      } else {
+        resumeBackgroundPlayback();
+        if (currentRef.current?.title) {
+          document.title = "My Music";
+        }
+      }
+    };
+
+    const handleWindowBlur = () => resumeBackgroundPlayback();
+    const handleWindowFocus = () => resumeBackgroundPlayback();
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("blur", handleWindowBlur);
+    window.addEventListener("focus", handleWindowFocus);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("blur", handleWindowBlur);
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, [current?.id, playing]);
 
   useEffect(() => {
     if (!playerRef.current) return;
